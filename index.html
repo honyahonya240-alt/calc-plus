@@ -341,8 +341,17 @@
         <input id="set-name" type="text" placeholder="例：りく">
       </div>
       <div class="field room-only hidden" id="room-fields-code">
-        <label>合言葉（相手と同じ言葉を入れる）</label>
-        <input id="set-room" type="text" placeholder="例：sakura2026">
+        <label>ルーム（招待リンクで相手とつながる）</label>
+        <button type="button" class="album-add" id="btn-make-invite" style="width:100%;margin-bottom:8px;">＋ 新しい招待リンクを作成</button>
+        <div id="invite-box" style="display:none;">
+          <div id="invite-url" style="font-size:12px;color:#c7c2e0;background:#12121a;border:1px solid #322f4a;border-radius:10px;padding:9px 11px;word-break:break-all;margin-bottom:6px;"></div>
+          <button type="button" class="album-add" id="btn-copy-invite" style="width:100%;">リンクをコピーして相手に送る</button>
+        </div>
+        <span class="fieldhint">作成したリンクを相手に送ると、同じ2人だけの部屋でやり取りできます。相手がリンクを開くだけで参加できます。</span>
+        <div style="margin-top:12px;">
+          <label style="font-size:11px;color:#8a869e;">（上級）合言葉で手動接続する場合</label>
+          <input id="set-room" type="text" placeholder="例：sakura2026 ※通常は空でOK">
+        </div>
       </div>
 
       <details class="adv">
@@ -879,12 +888,48 @@ function openSettings(){
   document.getElementById('set-name').value = cfg.name==='あなた' ? '' : cfg.name;
   document.getElementById('set-room').value = cfg.room;
   document.getElementById('save-note').textContent = '';
+  // 既にルームがあれば招待リンクを表示
+  if (cfg.room){ showInvite(cfg.room); } else { document.getElementById('invite-box').style.display='none'; }
   setModeUI(cfg.mode);
   setAutoLockUI(cfg.autoLock !== false);
   modal.classList.add('show');
 }
 document.getElementById('btn-settings').addEventListener('click', openSettings);
 document.getElementById('set-cancel').addEventListener('click', ()=>modal.classList.remove('show'));
+
+// ── 招待リンク ──
+function makeRoomId(){
+  // 推測不可能なランダムID（英数20文字）
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let s = '';
+  const arr = new Uint32Array(20);
+  (crypto.getRandomValues ? crypto.getRandomValues(arr) : arr).forEach(n=> s += chars[n % chars.length]);
+  if (s.length < 20){ while(s.length<20) s += chars[Math.floor(Math.random()*chars.length)]; }
+  return s;
+}
+function inviteUrl(roomId){
+  return location.origin + location.pathname + '?join=' + roomId;
+}
+function showInvite(roomId){
+  document.getElementById('invite-url').textContent = inviteUrl(roomId);
+  document.getElementById('invite-box').style.display = 'block';
+}
+document.getElementById('btn-make-invite').addEventListener('click', ()=>{
+  const id = makeRoomId();
+  document.getElementById('set-room').value = id; // 保存時にcfg.roomへ入る
+  showInvite(id);
+});
+document.getElementById('btn-copy-invite').addEventListener('click', async ()=>{
+  const url = document.getElementById('invite-url').textContent;
+  try {
+    await navigator.clipboard.writeText(url);
+    document.getElementById('btn-copy-invite').textContent = 'コピーしました！相手に送ってください';
+    setTimeout(()=>{ document.getElementById('btn-copy-invite').textContent='リンクをコピーして相手に送る'; }, 2500);
+  } catch(e){
+    // クリップボード不可の場合は選択できるように
+    document.getElementById('save-note').textContent = 'コピーできない場合はリンクを長押しで選択してください。';
+  }
+});
 
 document.getElementById('set-save').addEventListener('click', async ()=>{
   const pin = document.getElementById('set-pin').value.replace(/[^0-9]/g,'');
@@ -895,7 +940,6 @@ document.getElementById('set-save').addEventListener('click', async ()=>{
   const note = document.getElementById('save-note');
   if (pin.length < 3){ note.textContent = '暗証番号は3桁以上にしてください。'; return; }
   if (pin.startsWith('0')){ note.textContent = '暗証番号の先頭は0以外にしてください。'; return; }
-  // フェイク/パニックが本番PINと重複していないか
   const others = [fakePin, panicPin].filter(Boolean);
   if (others.includes(pin)){ note.textContent = 'フェイク/パニックは本番の暗証番号と別にしてください。'; return; }
   if (fakePin && panicPin && fakePin===panicPin){ note.textContent = 'フェイクとパニックは別の番号にしてください。'; return; }
@@ -918,6 +962,21 @@ document.getElementById('set-save').addEventListener('click', async ()=>{
    ============================================================ */
 (async ()=>{
   await loadCfg();
+  // 招待リンク（?join=部屋ID）で開かれた場合、その部屋に自動参加
+  try {
+    const params = new URLSearchParams(location.search);
+    const join = params.get('join');
+    if (join && /^[a-z0-9]{6,40}$/.test(join)){
+      cfg.mode = 'room';
+      cfg.room = join;
+      if (!cfg.name || cfg.name==='あなた') cfg.name = 'あなた';
+      await saveCfg();
+      // URLから ?join= を消してカモフラージュ（履歴に残さない）
+      history.replaceState(null, '', location.pathname);
+      // さりげなく知らせる（電卓の見た目は保ったまま）
+      window._justJoined = true;
+    }
+  } catch(e){}
   render();
 })();
 
