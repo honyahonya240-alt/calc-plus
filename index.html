@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="計算機+">
+<meta name="apple-mobile-web-app-title" content="計算機">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -554,13 +554,13 @@ async function loadMessages(){
   if (vaultIsFake){
     // フェイクPINで開いた偽画面：本物のデータには一切触れず、専用の空メモだけ表示
     try { const r = await Store.get('log:fake'); if (r && r.value) list = JSON.parse(r.value); } catch(e){}
-  } else if (cfg.mode==='room' && cfg.room){
-    const prefix = 'room:'+cfg.room+':msg:';
-    const res = await Store.list(prefix, true);
-    const keys = (res && res.keys) ? res.keys : [];
-    for (const k of keys){
-      try { const r = await Store.get(k, true); if (r && r.value) list.push(JSON.parse(r.value)); } catch(e){}
-    }
+    list.sort((a,b)=>a.ts-b.ts);
+    renderMessages(list);
+    return;
+  } else if (cfg.mode==='room'){
+    // ルームはFirestoreでリアルタイム購読
+    subscribeRoom();
+    return;
   } else if (cfg.mode==='private'){
     try { const r = await Store.get('log:private'); if (r && r.value) list = JSON.parse(r.value); } catch(e){}
   }
@@ -578,8 +578,10 @@ function renderMessages(list){
     messagesEl.innerHTML = '<div class="v-empty">'+msg+'</div>';
     return;
   }
+  const myUid = (window._fb && window._fb.uid) || null;
   messagesEl.innerHTML = list.map(m=>{
-    const mine = vaultIsFake || (cfg.mode==='private') || (m.sender===cfg.name);
+    const mine = vaultIsFake || (cfg.mode==='private')
+      || (m.uid && myUid ? m.uid===myUid : m.sender===cfg.name);
     if (mine){
       return '<div class="bubble mine">'+esc(m.text)+'<span class="meta">'+timeStr(m.ts)+'</span></div>';
     }
@@ -599,17 +601,64 @@ async function sendMessage(){
     try { const r=await Store.get('log:fake'); if(r&&r.value) log=JSON.parse(r.value); } catch(e){}
     log.push({ id, text, ts:now });
     await Store.set('log:fake', JSON.stringify(log));
-  } else if (cfg.mode==='room'){
-    if (!cfg.room){ openSettings(); return; }
-    await Store.set('room:'+cfg.room+':msg:'+id, JSON.stringify({ id, sender:cfg.name, text, ts:now }), true);
-  } else {
-    let log=[];
-    try { const r=await Store.get('log:private'); if(r&&r.value) log=JSON.parse(r.value); } catch(e){}
-    log.push({ id, text, ts:now });
-    await Store.set('log:private', JSON.stringify(log));
+    inputEl.value=''; inputEl.style.height='auto';
+    await loadMessages();
+    return;
   }
+  if (cfg.mode==='room'){
+    if (!cfg.room){ openSettings(); return; }
+    if (!(window._fb && window._fb.fs)){
+      console.warn('Firebase未接続のため送信できません');
+      return;
+    }
+    const { db, fs, uid } = window._fb;
+    try {
+      await fs.addDoc(fs.collection(db, 'rooms', cfg.room, 'messages'), {
+        text, sender: cfg.name, uid, ts: fs.serverTimestamp()
+      });
+    } catch(e){ console.error('送信エラー', e); }
+    inputEl.value=''; inputEl.style.height='auto';
+    // 受信は onSnapshot が自動反映するので loadMessages 不要
+    return;
+  }
+  // private
+  let log=[];
+  try { const r=await Store.get('log:private'); if(r&&r.value) log=JSON.parse(r.value); } catch(e){}
+  log.push({ id, text, ts:now });
+  await Store.set('log:private', JSON.stringify(log));
   inputEl.value=''; inputEl.style.height='auto';
   await loadMessages();
+}
+
+// ── ルームのリアルタイム購読（Firestore） ──
+let roomUnsub = null;
+function unsubscribeRoom(){ if (roomUnsub){ try{roomUnsub();}catch(e){} roomUnsub=null; } }
+function subscribeRoom(){
+  unsubscribeRoom();
+  if (vaultIsFake) return;
+  if (!cfg.room){ renderMessages([]); return; }
+  if (!(window._fb && window._fb.fs)){
+    // まだ接続前。準備できたら張り直す
+    window._onFirebaseReady = ()=>{
+      if (vault.classList.contains('show') && cfg.mode==='room' && !vaultIsFake) subscribeRoom();
+    };
+    renderMessages([]);
+    return;
+  }
+  const { db, fs } = window._fb;
+  const q = fs.query(fs.collection(db, 'rooms', cfg.room, 'messages'), fs.orderBy('ts'));
+  roomUnsub = fs.onSnapshot(q, (snap)=>{
+    const list = [];
+    snap.forEach(doc=>{
+      const d = doc.data();
+      let ts = Date.now();
+      if (d.ts && d.ts.toMillis) ts = d.ts.toMillis();
+      else if (typeof d.ts === 'number') ts = d.ts;
+      list.push({ text:d.text, sender:d.sender, uid:d.uid, ts });
+    });
+    list.sort((a,b)=>a.ts-b.ts);
+    renderMessages(list);
+  }, (err)=>{ console.error('トーク購読エラー', err); });
 }
 
 // ── パニックコード：本物のデータを即消去して電卓に戻る（警告なし） ──
@@ -622,21 +671,20 @@ async function panicWipe(){
       for (const p of idx){ await Store.delete('photo:data:'+p.id); }
       await Store.set('photo:index', JSON.stringify([]));
     } catch(e){}
-    if (cfg.room){
-      const res = await Store.list('room:'+cfg.room+':msg:', true);
-      const keys = (res && res.keys) ? res.keys : [];
-      for (const k of keys){ try { await Store.set(k, JSON.stringify({deleted:true}), true); } catch(e){} }
-    }
+    unsubscribeRoom(); // トーク購読も停止
   } catch(e){}
-  // 何事もなかったように電卓のまま（画面遷移すると怪しいので通常表示に戻すだけ）
+  // 何事もなかったように電卓のまま
   resetCalc();
 }
 
 function startPolling(){
   stopPolling();
-  if (!vaultIsFake && cfg.mode==='room'){ pollTimer = setInterval(loadMessages, 3000); }
+  if (!vaultIsFake && cfg.mode==='room'){ subscribeRoom(); }
 }
-function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+function stopPolling(){
+  if (pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+  unsubscribeRoom();
+}
 
 /* ============================================================
    アルバム（写真金庫）
@@ -880,6 +928,50 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(()=>{});
   });
+}
+</script>
+
+<!-- ============================================================
+     Firebase 接続テスト（フェーズB）
+     ↓↓↓ ここの firebaseConfig を、自分が保存した値に置き換える ↓↓↓
+     ============================================================ -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ▼▼▼ ここを自分の firebaseConfig に置き換える ▼▼▼
+const firebaseConfig = {
+  apiKey: "AIzaSyBCYDe9hYKFADlDR1-9-uJoz6BlxAj8if4",
+  authDomain: "calc-plus-7f603.firebaseapp.com",
+  projectId: "calc-plus-7f603",
+  storageBucket: "calc-plus-7f603.firebasestorage.app",
+  messagingSenderId: "45669152177",
+  appId: "1:45669152177:web:2a8e643958f64e850cb990"
+};
+// ▲▲▲ ここまで置き換える ▲▲▲
+
+try {
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  await signInAnonymously(auth);
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      console.log("%c✅ Firebase接続成功／匿名ログイン成功", "color:#2ecc71;font-weight:bold;");
+      // メイン側から使えるよう、Firestore APIごと公開
+      window._fb = {
+        app, auth, db, uid: user.uid,
+        fs: { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp }
+      };
+      // トーク画面を開いている最中に接続完了した場合、購読を張り直す
+      if (window._onFirebaseReady) window._onFirebaseReady();
+    }
+  });
+} catch (e) {
+  console.error("❌ Firebase接続エラー:", e.message);
+  console.error("firebaseConfigの値が正しく貼れているか確認してください。");
 }
 </script>
 </body>
