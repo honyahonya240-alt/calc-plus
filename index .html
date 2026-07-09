@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>電卓</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="計算機+">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Segoe UI", Roboto, sans-serif;
+    background:#000; color:#fff; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #app { width:100%; max-width:430px; height:100dvh; position:relative; }
+
+  /* ============ 電卓（表向き） ============ */
+  #calc { position:absolute; inset:0; display:flex; flex-direction:column; background:#000;
+    padding:8px 12px calc(20px + env(safe-area-inset-bottom)); }
+  .calc-top {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:6px 6px 0;
+  }
+  .calc-topbtn {
+    width:40px; height:40px; border-radius:50%; border:none; cursor:pointer;
+    background:#2c2c2e; color:#fff;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .15s;
+  }
+  .calc-topbtn:active { background:#4a4a4c; }
+  .calc-display {
+    flex:1 1 auto; min-height:0;
+    display:flex; align-items:flex-end; justify-content:flex-end;
+    padding:10px 14px 12px; color:#fff; font-weight:200;
+    font-size:min(24vw, 16vh, 100px); line-height:1.02; letter-spacing:-0.03em;
+    font-family:-apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+    overflow:hidden; white-space:nowrap; text-align:right;
+  }
+  .calc-pad { flex:0 0 auto; display:grid; grid-template-columns:repeat(4,1fr); gap:min(13px,1.5vh); }
+  .key {
+    border:none; border-radius:50%; aspect-ratio:1/1;
+    font-size:clamp(28px,9vw,38px); font-weight:400; color:#fff;
+    background:#333; cursor:pointer; user-select:none;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .25s, filter .08s;
+    font-family:-apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+  }
+  .key:active { background:#737373; transition:none; }
+  .key.fn { background:#a5a5a5; color:#000; font-size:clamp(24px,7.5vw,32px); }
+  .key.fn:active { background:#d9d9d9; }
+  .key.op { background:#ff9f0a; font-size:clamp(32px,10vw,44px); font-weight:400; padding-bottom:4px; }
+  .key.op:active { background:#fcc78e; }
+  .key.op.active { background:#fff; color:#ff9f0a; }
+
+  /* ============ 隠しメッセージ画面 ============ */
+  #vault {
+    position:absolute; inset:0; display:none; flex-direction:column;
+    background:#12121a; color:#e8e6f0;
+    opacity:0; transform:scale(.98);
+    transition:opacity .28s ease, transform .28s ease;
+  }
+  #vault.show { display:flex; opacity:1; transform:scale(1); }
+
+  .v-header {
+    display:flex; align-items:center; gap:12px;
+    padding:16px 18px 12px; border-bottom:1px solid #26243a;
+    background:#161522;
+  }
+  .v-title { display:flex; flex-direction:column; gap:3px; flex:1; min-width:0; }
+  .v-eyebrow {
+    font-family:ui-monospace, "SF Mono", Menlo, monospace;
+    font-size:10px; letter-spacing:.22em; color:#6f6a8a; text-transform:uppercase;
+  }
+  .v-room { font-size:17px; font-weight:600; letter-spacing:.01em; color:#e8e6f0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .v-btn {
+    border:none; background:#221f33; color:#c7c2e0; cursor:pointer;
+    width:40px; height:40px; border-radius:12px; font-size:18px;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    transition:background .12s;
+  }
+  .v-btn:active { background:#302c47; }
+
+  .v-messages {
+    flex:1; overflow-y:auto; padding:18px 14px 10px;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .v-empty {
+    margin:auto; text-align:center; color:#5f5b7a; font-size:14px; line-height:1.7;
+    max-width:240px;
+  }
+  .bubble {
+    max-width:78%; padding:10px 14px; border-radius:18px; font-size:15px;
+    line-height:1.45; word-break:break-word; position:relative;
+    animation:pop .18s ease;
+  }
+  @keyframes pop { from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+  .bubble .meta { display:block; font-size:10px; margin-top:4px; opacity:.55; }
+  .bubble.mine { align-self:flex-end; background:#9d8df1; color:#15121f; border-bottom-right-radius:5px; }
+  .bubble.theirs { align-self:flex-start; background:#232135; color:#e8e6f0; border-bottom-left-radius:5px; }
+  .bubble.theirs .sender { display:block; font-size:11px; font-weight:600; color:#9d8df1; margin-bottom:2px; }
+
+  .v-composer {
+    display:flex; gap:10px; padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+    border-top:1px solid #26243a; background:#161522;
+  }
+  .v-input {
+    flex:1; border:none; outline:none; resize:none;
+    background:#221f33; color:#e8e6f0; border-radius:22px;
+    padding:12px 16px; font-size:15px; font-family:inherit; max-height:110px;
+  }
+  .v-input::placeholder { color:#5f5b7a; }
+  .v-send {
+    border:none; background:#9d8df1; color:#15121f; cursor:pointer;
+    width:46px; height:46px; border-radius:50%; font-size:20px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; align-self:flex-end;
+    transition:filter .1s;
+  }
+  .v-send:active { filter:brightness(1.15); }
+
+  /* ============ 設定モーダル ============ */
+  .modal {
+    position:absolute; inset:0; background:rgba(6,6,12,.72);
+    display:none; align-items:center; justify-content:center; padding:24px; z-index:10;
+  }
+  .modal.show { display:flex; }
+  .sheet {
+    width:100%; max-width:360px; background:#1b1a28; border:1px solid #2c2942;
+    border-radius:22px; padding:22px; color:#e8e6f0;
+  }
+  .sheet h2 { font-size:18px; margin-bottom:4px; }
+  .sheet .hint { font-size:12px; color:#7d789a; margin-bottom:18px; line-height:1.6; }
+  .field { margin-bottom:16px; }
+  .field label { display:block; font-size:12px; color:#9c97ba; margin-bottom:6px; letter-spacing:.02em; }
+  .field input {
+    width:100%; background:#12121a; border:1px solid #322f4a; color:#fff;
+    border-radius:12px; padding:11px 13px; font-size:15px; outline:none; font-family:inherit;
+  }
+  .field input:focus { border-color:#9d8df1; }
+  .seg { display:flex; gap:8px; }
+  .seg button {
+    flex:1; padding:10px; border-radius:12px; border:1px solid #322f4a;
+    background:#12121a; color:#9c97ba; cursor:pointer; font-size:13px; font-family:inherit;
+  }
+  .seg button.on { background:#9d8df1; color:#15121f; border-color:#9d8df1; font-weight:600; }
+  .room-only { transition:opacity .2s; }
+  .room-only.hidden { display:none; }
+  .sheet-actions { display:flex; gap:10px; margin-top:6px; }
+  .sheet-actions button {
+    flex:1; padding:12px; border-radius:12px; border:none; cursor:pointer;
+    font-size:14px; font-weight:600; font-family:inherit;
+  }
+  .btn-primary { background:#9d8df1; color:#15121f; }
+  .btn-ghost { background:#262338; color:#c7c2e0; }
+  .save-note { font-size:11px; color:#6f6a8a; text-align:center; margin-top:12px; line-height:1.6; }
+  .adv { margin:4px 0 14px; border-top:1px solid #2c2942; padding-top:12px; }
+  .adv summary { font-size:13px; color:#9c97ba; cursor:pointer; list-style:none; padding:4px 0; }
+  .adv summary::-webkit-details-marker { display:none; }
+  .adv summary::before { content:'⚙ '; }
+  .adv[open] summary { margin-bottom:10px; color:#c7c2e0; }
+  .fieldhint { display:block; font-size:11px; color:#6f6a8a; margin-top:5px; line-height:1.55; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 電卓 -->
+  <div id="calc">
+    <div class="calc-top">
+      <button class="calc-topbtn" data-act="history" title="履歴">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </button>
+      <button class="calc-topbtn" data-act="scientific" title="関数電卓">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2.5"/><line x1="8" y1="6.5" x2="16" y2="6.5"/><line x1="8.5" y1="11" x2="8.5" y2="11.01"/><line x1="12" y1="11" x2="12" y2="11.01"/><line x1="15.5" y1="11" x2="15.5" y2="11.01"/><line x1="8.5" y1="14.5" x2="8.5" y2="14.5"/><line x1="12" y1="14.5" x2="12" y2="14.5"/><line x1="8.5" y1="18" x2="8.5" y2="18.01"/><line x1="12" y1="18" x2="12" y2="18.01"/><line x1="15.5" y1="15" x2="15.5" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="calc-display" id="display">0</div>
+    <div class="calc-pad" id="pad">
+      <button class="key fn" data-act="back" aria-label="delete">
+        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9L3 12z"/><line x1="16" y1="9" x2="11" y2="15"/><line x1="11" y1="9" x2="16" y2="15"/></svg>
+      </button>
+      <button class="key fn" data-act="clear">AC</button>
+      <button class="key fn" data-act="pct">%</button>
+      <button class="key op" data-op="/">÷</button>
+      <button class="key" data-num="7">7</button>
+      <button class="key" data-num="8">8</button>
+      <button class="key" data-num="9">9</button>
+      <button class="key op" data-op="*">×</button>
+      <button class="key" data-num="4">4</button>
+      <button class="key" data-num="5">5</button>
+      <button class="key" data-num="6">6</button>
+      <button class="key op" data-op="-">−</button>
+      <button class="key" data-num="1">1</button>
+      <button class="key" data-num="2">2</button>
+      <button class="key" data-num="3">3</button>
+      <button class="key op" data-op="+">+</button>
+      <button class="key fn" data-act="neg">
+        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="11" y2="8"/><line x1="19" y1="16" x2="12" y2="16"/><line x1="18" y1="4.5" x2="6" y2="19.5"/></svg>
+      </button>
+      <button class="key" data-num="0">0</button>
+      <button class="key" data-num=".">.</button>
+      <button class="key op" data-act="eq">=</button>
+    </div>
+  </div>
+
+  <!-- 隠しメッセージ画面 -->
+  <div id="vault">
+    <div class="v-header">
+      <div class="v-title">
+        <span class="v-eyebrow" id="v-eyebrow">非公開</span>
+        <span class="v-room" id="v-room">プライベートメモ</span>
+      </div>
+      <button class="v-btn" id="btn-settings" title="設定">⚙</button>
+      <button class="v-btn" id="btn-lock" title="ロック">✕</button>
+    </div>
+    <div class="v-messages" id="messages"></div>
+    <div class="v-composer">
+      <textarea class="v-input" id="input" rows="1" placeholder="メッセージを入力…"></textarea>
+      <button class="v-send" id="btn-send">↑</button>
+    </div>
+  </div>
+
+  <!-- 設定モーダル -->
+  <div class="modal" id="modal">
+    <div class="sheet">
+      <h2>設定</h2>
+      <p class="hint">暗証番号を入力して「=」を押すと、この画面が開きます。</p>
+
+      <div class="field">
+        <label>暗証番号（数字）</label>
+        <input id="set-pin" type="tel" inputmode="numeric" placeholder="例：1958">
+      </div>
+
+      <div class="field">
+        <label>モード</label>
+        <div class="seg">
+          <button id="mode-private" class="on">メモ（自分だけ）</button>
+          <button id="mode-room">ルーム（相手と）</button>
+        </div>
+      </div>
+
+      <div class="field room-only hidden" id="room-fields-name">
+        <label>あなたの表示名</label>
+        <input id="set-name" type="text" placeholder="例：りく">
+      </div>
+      <div class="field room-only hidden" id="room-fields-code">
+        <label>合言葉（相手と同じ言葉を入れる）</label>
+        <input id="set-room" type="text" placeholder="例：sakura2026">
+      </div>
+
+      <details class="adv">
+        <summary>セキュリティ詳細設定</summary>
+        <div class="field">
+          <label>フェイク暗証番号（任意）</label>
+          <input id="set-fakepin" type="tel" inputmode="numeric" placeholder="別の番号で"><br>
+          <span class="fieldhint">この番号で開くと、空っぽの偽メモ画面が出ます。誰かに見せろと迫られた時用。</span>
+        </div>
+        <div class="field">
+          <label>パニックコード（任意）</label>
+          <input id="set-panicpin" type="tel" inputmode="numeric" placeholder="別の番号で"><br>
+          <span class="fieldhint">この番号を入れると、本物のメモを即消去します（確認なし・画面は電卓のまま）。</span>
+        </div>
+        <div class="field">
+          <label>自動ロック</label>
+          <div class="seg">
+            <button type="button" id="al-on" class="on">アプリを離れたら閉じる</button>
+            <button type="button" id="al-off">しない</button>
+          </div>
+        </div>
+      </details>
+
+      <div class="sheet-actions">
+        <button class="btn-ghost" id="set-cancel">キャンセル</button>
+        <button class="btn-primary" id="set-save">保存</button>
+      </div>
+      <p class="save-note" id="save-note"></p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   ストレージ（window.storage を使用。無い環境ではメモリに退避）
+   ============================================================ */
+const mem = {};
+function lsAvail(){ try { const k='__t'; localStorage.setItem(k,'1'); localStorage.removeItem(k); return true; } catch(e){ return false; } }
+const HAS_LS = lsAvail();
+const Store = {
+  async get(k, shared=false){
+    if (window.storage){ try { return await window.storage.get(k, shared); } catch(e){ return null; } }
+    const kk = (shared?'S:':'P:')+k;
+    if (HAS_LS){ const v = localStorage.getItem(kk); return v===null ? null : {key:k, value:v, shared}; }
+    return kk in mem ? {key:k, value:mem[kk], shared} : null;
+  },
+  async set(k, v, shared=false){
+    if (window.storage){ try { return await window.storage.set(k, v, shared); } catch(e){} }
+    const kk = (shared?'S:':'P:')+k;
+    if (HAS_LS){ try { localStorage.setItem(kk, v); return; } catch(e){} }
+    mem[kk] = v;
+  },
+  async list(prefix='', shared=false){
+    if (window.storage){ try { return await window.storage.list(prefix, shared); } catch(e){ return {keys:[]}; } }
+    const pre=(shared?'S:':'P:')+prefix;
+    if (HAS_LS){
+      const keys=[]; for (let i=0;i<localStorage.length;i++){ const key=localStorage.key(i); if (key && key.startsWith(pre)) keys.push(key.slice(2)); }
+      return { keys };
+    }
+    return { keys:Object.keys(mem).filter(x=>x.startsWith(pre)).map(x=>x.slice(2)) };
+  }
+};
+
+/* ============================================================
+   設定
+   ============================================================ */
+const DEFAULT_PIN = '1958';
+let cfg = { pin:DEFAULT_PIN, fakePin:'', panicPin:'', mode:'private', name:'あなた', room:'', autoLock:true };
+let vaultIsFake = false;  // フェイクPINで開いた偽画面かどうか
+
+async function loadCfg(){
+  try {
+    const r = await Store.get('cfg:app');
+    if (r && r.value){ cfg = Object.assign(cfg, JSON.parse(r.value)); }
+  } catch(e){}
+}
+async function saveCfg(){
+  await Store.set('cfg:app', JSON.stringify(cfg));
+}
+
+/* ============================================================
+   電卓ロジック
+   ============================================================ */
+const displayEl = document.getElementById('display');
+let cur='0', acc=null, op=null, fresh=true, usedOp=false;
+
+function fmt(s){
+  if (s==='' || isNaN(Number(s))) return s || '0';
+  let n = Number(s);
+  // 長すぎる数字は指数表記に
+  if (Math.abs(n) >= 1e12 || (Math.abs(n) < 1e-7 && n !== 0)) return n.toExponential(5);
+  // 整数部に3桁カンマ（iPhoneと同じ）。入力途中の小数点・末尾ゼロは保持
+  const neg = s.startsWith('-') ? '-' : '';
+  const body = neg ? s.slice(1) : s;
+  const dot = body.indexOf('.');
+  const intPart = dot === -1 ? body : body.slice(0, dot);
+  const decPart = dot === -1 ? '' : body.slice(dot);
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return neg + grouped + decPart;
+}
+const clearKey = document.querySelector('[data-act="clear"]');
+function render(){
+  displayEl.textContent = fmt(cur);
+  // 入力中はAC→C（iPhoneと同じ挙動）
+  clearKey.textContent = (cur !== '0' || op !== null || acc !== null) ? 'C' : 'AC';
+  // 桁数に応じて自動縮小
+  const len = displayEl.textContent.length;
+  displayEl.style.fontSize = len > 9 ? 'clamp(38px, '+(190/len)+'vw, 70px)' : '';
+}
+function clearOpHighlight(){ document.querySelectorAll('.key.op').forEach(k=>k.classList.remove('active')); }
+
+function inputDigit(d){
+  if (d==='.'){
+    if (fresh){ cur='0.'; fresh=false; }
+    else if (!cur.includes('.')){ cur+='.'; }
+    render(); return;
+  }
+  if (fresh){ cur=d; fresh=false; }
+  else { cur = (cur==='0') ? d : cur + d; }
+  if (cur.replace('.','').replace('-','').length > 14) cur = cur.slice(0,15);
+  render();
+}
+function apply(a,o,b){
+  switch(o){ case '+':return a+b; case '-':return a-b; case '*':return a*b;
+    case '/': return b===0 ? NaN : a/b; } return b;
+}
+function chooseOp(o, el){
+  if (op!==null && !fresh){ acc = apply(acc, op, Number(cur)); cur=String(acc); render(); }
+  else if (acc===null){ acc = Number(cur); }
+  op=o; fresh=true; usedOp=true;
+  clearOpHighlight(); if (el) el.classList.add('active');
+}
+function equals(){
+  // ── 暗証番号チェック（演算子を使わずに数字だけ入れて = を押した場合） ──
+  if (!usedOp){
+    if (cur === cfg.pin){ resetCalc(); vaultIsFake=false; openVault(); return; }
+    if (cfg.fakePin && cur === cfg.fakePin){ resetCalc(); vaultIsFake=true; openVault(); return; }
+    if (cfg.panicPin && cur === cfg.panicPin){ resetCalc(); panicWipe(); return; }
+  }
+  clearOpHighlight();
+  if (op!==null && !fresh){
+    acc = apply(acc, op, Number(cur));
+    cur = String(acc); render();
+  }
+  op=null; fresh=true; acc=null; usedOp=false;
+}
+function resetCalc(){ cur='0'; acc=null; op=null; fresh=true; usedOp=false; clearOpHighlight(); render(); }
+
+document.getElementById('pad').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  if (b.dataset.num!==undefined) return inputDigit(b.dataset.num);
+  if (b.dataset.op!==undefined) return chooseOp(b.dataset.op, b);
+  switch(b.dataset.act){
+    case 'clear':
+      if (clearKey.textContent === 'C' && (cur !== '0') && op !== null){
+        // C: 直前の入力だけ消す（iPhoneと同じ）
+        cur='0'; fresh=true; render();
+      } else { resetCalc(); }
+      break;
+    case 'neg': cur=String(-Number(cur)); render(); break;
+    case 'pct': cur=String(Number(cur)/100); render(); break;
+    case 'back':
+      // ⌫ 1文字ずつ削除（iPhoneと同じ）
+      if (!fresh && cur.length > 1){ cur = cur.slice(0,-1); if (cur==='-'||cur==='') cur='0'; }
+      else { cur='0'; fresh=true; }
+      render(); break;
+    case 'eq': equals(); break;
+  }
+});
+
+/* ============================================================
+   メッセージ画面
+   ============================================================ */
+const vault = document.getElementById('vault');
+const calc = document.getElementById('calc');
+const messagesEl = document.getElementById('messages');
+const inputEl = document.getElementById('input');
+let pollTimer = null;
+
+function esc(s){ return s.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function timeStr(ts){ const d=new Date(ts); return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0'); }
+
+function updateHeader(){
+  const eyebrow = document.getElementById('v-eyebrow');
+  const room = document.getElementById('v-room');
+  if (vaultIsFake){
+    eyebrow.textContent = '非公開';
+    room.textContent = 'プライベートメモ';
+    return;
+  }
+  if (cfg.mode==='room'){
+    eyebrow.textContent = '共有ルーム';
+    room.textContent = cfg.room ? ('# '+cfg.room) : '合言葉が未設定';
+  } else {
+    eyebrow.textContent = '非公開';
+    room.textContent = 'プライベートメモ';
+  }
+}
+
+async function loadMessages(){
+  let list = [];
+  if (vaultIsFake){
+    // フェイクPINで開いた偽画面：本物のデータには一切触れず、専用の空メモだけ表示
+    try { const r = await Store.get('log:fake'); if (r && r.value) list = JSON.parse(r.value); } catch(e){}
+  } else if (cfg.mode==='room' && cfg.room){
+    const prefix = 'room:'+cfg.room+':msg:';
+    const res = await Store.list(prefix, true);
+    const keys = (res && res.keys) ? res.keys : [];
+    for (const k of keys){
+      try { const r = await Store.get(k, true); if (r && r.value) list.push(JSON.parse(r.value)); } catch(e){}
+    }
+  } else if (cfg.mode==='private'){
+    try { const r = await Store.get('log:private'); if (r && r.value) list = JSON.parse(r.value); } catch(e){}
+  }
+  list.sort((a,b)=>a.ts-b.ts);
+  renderMessages(list);
+}
+
+function renderMessages(list){
+  if (!list.length){
+    const msg = (cfg.mode==='room' && !cfg.room)
+      ? '⚙ から合言葉を設定すると、同じ合言葉の相手とやり取りできます。'
+      : (cfg.mode==='room'
+          ? 'メッセージはまだありません。最初の一通を送ってみましょう。'
+          : 'ここに書いたメモは自分だけが見られます。');
+    messagesEl.innerHTML = '<div class="v-empty">'+msg+'</div>';
+    return;
+  }
+  messagesEl.innerHTML = list.map(m=>{
+    const mine = vaultIsFake || (cfg.mode==='private') || (m.sender===cfg.name);
+    if (mine){
+      return '<div class="bubble mine">'+esc(m.text)+'<span class="meta">'+timeStr(m.ts)+'</span></div>';
+    }
+    return '<div class="bubble theirs"><span class="sender">'+esc(m.sender||'相手')+'</span>'+
+           esc(m.text)+'<span class="meta">'+timeStr(m.ts)+'</span></div>';
+  }).join('');
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+async function sendMessage(){
+  const text = inputEl.value.trim();
+  if (!text) return;
+  const now = Date.now();
+  const id = now+'_'+Math.random().toString(36).slice(2,7);
+  if (vaultIsFake){
+    let log=[];
+    try { const r=await Store.get('log:fake'); if(r&&r.value) log=JSON.parse(r.value); } catch(e){}
+    log.push({ id, text, ts:now });
+    await Store.set('log:fake', JSON.stringify(log));
+  } else if (cfg.mode==='room'){
+    if (!cfg.room){ openSettings(); return; }
+    await Store.set('room:'+cfg.room+':msg:'+id, JSON.stringify({ id, sender:cfg.name, text, ts:now }), true);
+  } else {
+    let log=[];
+    try { const r=await Store.get('log:private'); if(r&&r.value) log=JSON.parse(r.value); } catch(e){}
+    log.push({ id, text, ts:now });
+    await Store.set('log:private', JSON.stringify(log));
+  }
+  inputEl.value=''; inputEl.style.height='auto';
+  await loadMessages();
+}
+
+// ── パニックコード：本物のデータを即消去して電卓に戻る（警告なし） ──
+async function panicWipe(){
+  try {
+    await Store.set('log:private', JSON.stringify([]));
+    if (cfg.room){
+      const res = await Store.list('room:'+cfg.room+':msg:', true);
+      const keys = (res && res.keys) ? res.keys : [];
+      for (const k of keys){ try { await Store.set(k, JSON.stringify({deleted:true}), true); } catch(e){} }
+    }
+  } catch(e){}
+  // 何事もなかったように電卓のまま（画面遷移すると怪しいので通常表示に戻すだけ）
+  resetCalc();
+}
+
+function startPolling(){
+  stopPolling();
+  if (!vaultIsFake && cfg.mode==='room'){ pollTimer = setInterval(loadMessages, 3000); }
+}
+function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+
+function openVault(){
+  updateHeader();
+  // フェイク画面では設定ボタンを隠す（本物のPINが見えてしまうため）
+  document.getElementById('btn-settings').style.display = vaultIsFake ? 'none' : 'flex';
+  calc.style.display='none';
+  vault.classList.add('show');
+  loadMessages();
+  startPolling();
+}
+function lockVault(){
+  stopPolling();
+  vault.classList.remove('show');
+  setTimeout(()=>{ calc.style.display='flex'; vaultIsFake=false; resetCalc(); }, 260);
+}
+
+// アプリがバックグラウンドに回ったら自動でロック（覗き見防止）
+document.addEventListener('visibilitychange', ()=>{
+  if (document.hidden && cfg.autoLock && vault.classList.contains('show')){
+    stopPolling();
+    vault.classList.remove('show');
+    calc.style.display='flex'; vaultIsFake=false; resetCalc();
+  }
+});
+
+document.getElementById('btn-lock').addEventListener('click', lockVault);
+document.getElementById('btn-send').addEventListener('click', sendMessage);
+inputEl.addEventListener('input', ()=>{ inputEl.style.height='auto'; inputEl.style.height=Math.min(inputEl.scrollHeight,110)+'px'; });
+inputEl.addEventListener('keydown', e=>{
+  if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); }
+});
+
+/* ============================================================
+   設定モーダル
+   ============================================================ */
+const modal = document.getElementById('modal');
+const roomFieldsName = document.getElementById('room-fields-name');
+const roomFieldsCode = document.getElementById('room-fields-code');
+const mPrivate = document.getElementById('mode-private');
+const mRoom = document.getElementById('mode-room');
+let draftMode = 'private';
+
+function setModeUI(mode){
+  draftMode = mode;
+  mPrivate.classList.toggle('on', mode==='private');
+  mRoom.classList.toggle('on', mode==='room');
+  roomFieldsName.classList.toggle('hidden', mode!=='room');
+  roomFieldsCode.classList.toggle('hidden', mode!=='room');
+}
+mPrivate.addEventListener('click', ()=>setModeUI('private'));
+mRoom.addEventListener('click', ()=>setModeUI('room'));
+
+const alOn = document.getElementById('al-on');
+const alOff = document.getElementById('al-off');
+let draftAutoLock = true;
+function setAutoLockUI(v){ draftAutoLock=v; alOn.classList.toggle('on',v); alOff.classList.toggle('on',!v); }
+alOn.addEventListener('click', ()=>setAutoLockUI(true));
+alOff.addEventListener('click', ()=>setAutoLockUI(false));
+
+function openSettings(){
+  document.getElementById('set-pin').value = cfg.pin;
+  document.getElementById('set-fakepin').value = cfg.fakePin || '';
+  document.getElementById('set-panicpin').value = cfg.panicPin || '';
+  document.getElementById('set-name').value = cfg.name==='あなた' ? '' : cfg.name;
+  document.getElementById('set-room').value = cfg.room;
+  document.getElementById('save-note').textContent = '';
+  setModeUI(cfg.mode);
+  setAutoLockUI(cfg.autoLock !== false);
+  modal.classList.add('show');
+}
+document.getElementById('btn-settings').addEventListener('click', openSettings);
+document.getElementById('set-cancel').addEventListener('click', ()=>modal.classList.remove('show'));
+
+document.getElementById('set-save').addEventListener('click', async ()=>{
+  const pin = document.getElementById('set-pin').value.replace(/[^0-9]/g,'');
+  const fakePin = document.getElementById('set-fakepin').value.replace(/[^0-9]/g,'');
+  const panicPin = document.getElementById('set-panicpin').value.replace(/[^0-9]/g,'');
+  const name = document.getElementById('set-name').value.trim();
+  const room = document.getElementById('set-room').value.trim().replace(/[\s\/\\'"]/g,'');
+  const note = document.getElementById('save-note');
+  if (pin.length < 3){ note.textContent = '暗証番号は3桁以上にしてください。'; return; }
+  if (pin.startsWith('0')){ note.textContent = '暗証番号の先頭は0以外にしてください。'; return; }
+  // フェイク/パニックが本番PINと重複していないか
+  const others = [fakePin, panicPin].filter(Boolean);
+  if (others.includes(pin)){ note.textContent = 'フェイク/パニックは本番の暗証番号と別にしてください。'; return; }
+  if (fakePin && panicPin && fakePin===panicPin){ note.textContent = 'フェイクとパニックは別の番号にしてください。'; return; }
+  cfg.pin = pin;
+  cfg.fakePin = fakePin;
+  cfg.panicPin = panicPin;
+  cfg.mode = draftMode;
+  cfg.name = name || 'あなた';
+  cfg.room = room;
+  cfg.autoLock = draftAutoLock;
+  await saveCfg();
+  modal.classList.remove('show');
+  updateHeader();
+  await loadMessages();
+  startPolling();
+});
+
+/* ============================================================
+   起動
+   ============================================================ */
+(async ()=>{
+  await loadCfg();
+  render();
+})();
+
+/* ============================================================
+   Service Worker 登録（オフライン動作用）
+   ============================================================ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
