@@ -124,6 +124,69 @@
   }
   .v-send:active { filter:brightness(1.15); }
 
+  /* ============ タブ ============ */
+  .v-tabs { display:flex; gap:6px; padding:8px 14px 0; background:#161522; }
+  .v-tab {
+    flex:1; border:none; background:transparent; color:#8a869e; cursor:pointer;
+    padding:10px 0 11px; font-size:14px; font-family:inherit; font-weight:600;
+    border-bottom:2px solid transparent; transition:color .15s, border-color .15s;
+  }
+  .v-tab.on { color:#9d8df1; border-bottom-color:#9d8df1; }
+  .tab-pane { flex:1; display:flex; flex-direction:column; min-height:0; }
+
+  /* ============ アルバム ============ */
+  .album-bar {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px 10px; background:#161522; border-bottom:1px solid #26243a;
+  }
+  .album-count { font-size:13px; color:#8a869e; }
+  .album-add {
+    border:none; background:#9d8df1; color:#15121f; cursor:pointer;
+    padding:9px 16px; border-radius:20px; font-size:13px; font-weight:600; font-family:inherit;
+    transition:filter .1s;
+  }
+  .album-add:active { filter:brightness(1.15); }
+  .album-grid {
+    flex:1; overflow-y:auto; padding:12px;
+    display:grid; grid-template-columns:repeat(3,1fr); gap:8px; align-content:start;
+  }
+  .album-grid:empty::after {
+    content:'写真はまだありません。＋から追加できます。';
+    grid-column:1/-1; text-align:center; color:#5f5b7a; font-size:13px;
+    padding:40px 20px; line-height:1.7;
+  }
+  .thumb {
+    position:relative; aspect-ratio:1/1; border-radius:12px; overflow:hidden;
+    background:#221f33; cursor:pointer;
+  }
+  .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb .badge {
+    position:absolute; top:5px; right:5px; background:rgba(0,0,0,.55);
+    color:#fff; font-size:10px; padding:2px 6px; border-radius:8px;
+  }
+  .album-locked {
+    grid-column:1/-1; margin:8px 4px; padding:14px 16px; border-radius:14px;
+    background:#211d33; border:1px solid #322c47; color:#c7c2e0; font-size:12.5px; line-height:1.7;
+  }
+  .album-locked b { color:#9d8df1; }
+
+  /* ============ 写真ビューア ============ */
+  .viewer {
+    position:absolute; inset:0; z-index:20; background:#000;
+    display:none; flex-direction:column;
+  }
+  .viewer.show { display:flex; }
+  .viewer-top {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:14px 16px calc(14px + env(safe-area-inset-top));
+  }
+  .viewer-btn {
+    border:none; background:rgba(255,255,255,.12); color:#fff; cursor:pointer;
+    padding:8px 16px; border-radius:20px; font-size:14px; font-family:inherit;
+  }
+  .viewer-del { background:rgba(255,80,80,.85); }
+  .viewer img { flex:1; width:100%; object-fit:contain; min-height:0; }
+
   /* ============ 設定モーダル ============ */
   .modal {
     position:absolute; inset:0; background:rgba(6,6,12,.72);
@@ -219,11 +282,39 @@
       <button class="v-btn" id="btn-settings" title="設定">⚙</button>
       <button class="v-btn" id="btn-lock" title="ロック">✕</button>
     </div>
-    <div class="v-messages" id="messages"></div>
-    <div class="v-composer">
-      <textarea class="v-input" id="input" rows="1" placeholder="メッセージを入力…"></textarea>
-      <button class="v-send" id="btn-send">↑</button>
+
+    <div class="v-tabs" id="v-tabs">
+      <button class="v-tab on" data-tab="memo">メモ</button>
+      <button class="v-tab" data-tab="album">アルバム</button>
     </div>
+
+    <!-- メモタブ -->
+    <div class="tab-pane" id="pane-memo">
+      <div class="v-messages" id="messages"></div>
+      <div class="v-composer">
+        <textarea class="v-input" id="input" rows="1" placeholder="メッセージを入力…"></textarea>
+        <button class="v-send" id="btn-send">↑</button>
+      </div>
+    </div>
+
+    <!-- アルバムタブ -->
+    <div class="tab-pane" id="pane-album" style="display:none;">
+      <div class="album-bar">
+        <span class="album-count" id="album-count">0 枚</span>
+        <button class="album-add" id="btn-add-photo">＋ 写真を追加</button>
+      </div>
+      <div class="album-grid" id="album-grid"></div>
+      <input type="file" id="file-input" accept="image/*" multiple style="display:none;">
+    </div>
+  </div>
+
+  <!-- 写真ビューア -->
+  <div class="viewer" id="viewer">
+    <div class="viewer-top">
+      <button class="viewer-btn" id="viewer-close">✕</button>
+      <button class="viewer-btn viewer-del" id="viewer-delete">削除</button>
+    </div>
+    <img id="viewer-img" src="" alt="">
   </div>
 
   <!-- 設定モーダル -->
@@ -313,6 +404,12 @@ const Store = {
       return { keys };
     }
     return { keys:Object.keys(mem).filter(x=>x.startsWith(pre)).map(x=>x.slice(2)) };
+  },
+  async delete(k, shared=false){
+    if (window.storage){ try { return await window.storage.delete(k, shared); } catch(e){} return; }
+    const kk = (shared?'S:':'P:')+k;
+    if (HAS_LS){ try { localStorage.removeItem(kk); return; } catch(e){} }
+    delete mem[kk];
   }
 };
 
@@ -519,6 +616,12 @@ async function sendMessage(){
 async function panicWipe(){
   try {
     await Store.set('log:private', JSON.stringify([]));
+    // 写真も全消去
+    try {
+      const idx = await getPhotoIndex();
+      for (const p of idx){ await Store.delete('photo:data:'+p.id); }
+      await Store.set('photo:index', JSON.stringify([]));
+    } catch(e){}
     if (cfg.room){
       const res = await Store.list('room:'+cfg.room+':msg:', true);
       const keys = (res && res.keys) ? res.keys : [];
@@ -535,10 +638,136 @@ function startPolling(){
 }
 function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 
+/* ============================================================
+   アルバム（写真金庫）
+   ============================================================ */
+const FREE_PHOTO_LIMIT = 10;      // 無料版の上限（プレミアムで解除する想定）
+const PHOTO_MAX_DIM = 1280;       // 保存時の最大辺（圧縮）
+const PHOTO_QUALITY = 0.7;        // JPEG品質
+
+async function getPhotoIndex(){
+  try { const r = await Store.get('photo:index'); if (r && r.value) return JSON.parse(r.value); } catch(e){}
+  return [];
+}
+async function savePhotoIndex(idx){ await Store.set('photo:index', JSON.stringify(idx)); }
+
+// Fileを縮小・JPEG圧縮してdataURL化
+function compressImage(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let {width:w, height:h} = img;
+        if (w > h && w > PHOTO_MAX_DIM){ h = Math.round(h*PHOTO_MAX_DIM/w); w = PHOTO_MAX_DIM; }
+        else if (h >= w && h > PHOTO_MAX_DIM){ w = Math.round(w*PHOTO_MAX_DIM/h); h = PHOTO_MAX_DIM; }
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve({ dataUrl:c.toDataURL('image/jpeg', PHOTO_QUALITY), w, h });
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addPhotos(files){
+  if (vaultIsFake) return; // 偽画面では保存しない
+  let idx = await getPhotoIndex();
+  const canAdd = Math.max(0, FREE_PHOTO_LIMIT - idx.length);
+  if (canAdd <= 0){ renderAlbum(); return; }
+  const list = Array.from(files).slice(0, canAdd);
+  for (const f of list){
+    if (!f.type.startsWith('image/')) continue;
+    try {
+      const { dataUrl, w, h } = await compressImage(f);
+      const id = Date.now()+'_'+Math.random().toString(36).slice(2,7);
+      await Store.set('photo:data:'+id, dataUrl);
+      idx.push({ id, ts:Date.now(), w, h });
+    } catch(e){ /* 1枚失敗しても続行 */ }
+  }
+  await savePhotoIndex(idx);
+  renderAlbum();
+}
+
+async function deletePhoto(id){
+  let idx = await getPhotoIndex();
+  idx = idx.filter(p => p.id !== id);
+  await savePhotoIndex(idx);
+  await Store.delete('photo:data:'+id);
+  renderAlbum();
+}
+
+async function renderAlbum(){
+  const grid = document.getElementById('album-grid');
+  const countEl = document.getElementById('album-count');
+  const idx = (await getPhotoIndex()).sort((a,b)=>b.ts-a.ts);
+  countEl.textContent = idx.length + ' 枚' + (idx.length>=FREE_PHOTO_LIMIT ? '（上限）' : ' / '+FREE_PHOTO_LIMIT);
+  grid.innerHTML = '';
+  for (const p of idx){
+    let data = '';
+    try { const r = await Store.get('photo:data:'+p.id); data = r ? r.value : ''; } catch(e){}
+    if (!data) continue;
+    const div = document.createElement('div');
+    div.className = 'thumb';
+    div.innerHTML = '<img src="'+data+'" alt="">';
+    div.addEventListener('click', ()=> openViewer(p.id, data));
+    grid.appendChild(div);
+  }
+  if (idx.length >= FREE_PHOTO_LIMIT){
+    const note = document.createElement('div');
+    note.className = 'album-locked';
+    note.innerHTML = '無料版は<b>'+FREE_PHOTO_LIMIT+'枚</b>まで保存できます。もっと保存するには写真を削除するか、プレミアム（準備中）で無制限になります。';
+    grid.appendChild(note);
+  }
+}
+
+// 写真ビューア
+let viewerCurrentId = null;
+function openViewer(id, data){
+  viewerCurrentId = id;
+  document.getElementById('viewer-img').src = data;
+  document.getElementById('viewer').classList.add('show');
+}
+function closeViewer(){
+  document.getElementById('viewer').classList.remove('show');
+  document.getElementById('viewer-img').src = '';
+  viewerCurrentId = null;
+}
+document.getElementById('viewer-close').addEventListener('click', closeViewer);
+document.getElementById('viewer-delete').addEventListener('click', async ()=>{
+  if (viewerCurrentId){ await deletePhoto(viewerCurrentId); closeViewer(); }
+});
+document.getElementById('btn-add-photo').addEventListener('click', ()=>{
+  document.getElementById('file-input').click();
+});
+document.getElementById('file-input').addEventListener('change', async (e)=>{
+  if (e.target.files && e.target.files.length){ await addPhotos(e.target.files); }
+  e.target.value = ''; // 同じ写真を再選択できるようにリセット
+});
+
+// タブ切り替え
+function switchTab(tab){
+  document.querySelectorAll('.v-tab').forEach(b=> b.classList.toggle('on', b.dataset.tab===tab));
+  document.getElementById('pane-memo').style.display  = (tab==='memo')  ? 'flex' : 'none';
+  document.getElementById('pane-album').style.display = (tab==='album') ? 'flex' : 'none';
+  if (tab==='album') renderAlbum();
+}
+document.getElementById('v-tabs').addEventListener('click', (e)=>{
+  const b = e.target.closest('.v-tab'); if (!b) return;
+  switchTab(b.dataset.tab);
+});
+
+
 function openVault(){
   updateHeader();
-  // フェイク画面では設定ボタンを隠す（本物のPINが見えてしまうため）
+  // フェイク画面では設定ボタンとアルバムタブを隠す（本物の情報を守る）
   document.getElementById('btn-settings').style.display = vaultIsFake ? 'none' : 'flex';
+  document.querySelector('.v-tab[data-tab="album"]').style.display = vaultIsFake ? 'none' : 'block';
+  switchTab('memo');
   calc.style.display='none';
   vault.classList.add('show');
   loadMessages();
@@ -546,6 +775,7 @@ function openVault(){
 }
 function lockVault(){
   stopPolling();
+  closeViewer();
   vault.classList.remove('show');
   setTimeout(()=>{ calc.style.display='flex'; vaultIsFake=false; resetCalc(); }, 260);
 }
@@ -554,6 +784,7 @@ function lockVault(){
 document.addEventListener('visibilitychange', ()=>{
   if (document.hidden && cfg.autoLock && vault.classList.contains('show')){
     stopPolling();
+    closeViewer();
     vault.classList.remove('show');
     calc.style.display='flex'; vaultIsFake=false; resetCalc();
   }
