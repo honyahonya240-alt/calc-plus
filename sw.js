@@ -1,7 +1,7 @@
 /* シークレット電卓 Service Worker
    電卓とメモをオフラインでも動かすためのキャッシュ。
    ※ バージョンを上げると古いキャッシュを破棄して更新される。 */
-const CACHE = 'calc-plus-v2';
+const CACHE = 'calc-plus-v5';
 const ASSETS = [
   'index.html',
   'manifest.json',
